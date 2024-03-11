@@ -10,21 +10,23 @@ package main
 // Please do not change this file.
 //
 
-import "6.5840/mr"
+import (
+	"6.5840/mr"
+)
 import "plugin"
 import "os"
 import "fmt"
 import "log"
 
 func main() {
-	if len(os.Args) != 2 {
+	if len(os.Args) != 3 {
 		fmt.Fprintf(os.Stderr, "Usage: mrworker xxx.so\n")
 		os.Exit(1)
 	}
 
 	mapf, reducef := loadPlugin(os.Args[1])
-
-	mr.Worker(mapf, reducef)
+	t := os.Args[2]
+	mr.Worker(mapf, reducef, t)
 }
 
 // load the application Map and Reduce functions
