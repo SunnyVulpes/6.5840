@@ -35,21 +35,15 @@ func ihash(key string) int {
 
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue,
-	reducef func(string, []string) string, t string) {
+	reducef func(string, []string) string) {
 
 	for {
 		req := GetTaskArgs{}
 		resp := GetTaskReply{}
 		call("Coordinator.GetTask", &req, &resp)
 		switch resp.TaskType {
-		case 0:
-			log.Printf("processing %v", resp.IMap)
-			if resp.TaskType == -1 {
-				time.Sleep(10 * time.Second)
-				continue
-			}
-			ti, _ := time.ParseDuration(t)
-			time.Sleep(ti)
+		case MapTask:
+			//log.Printf("mapping %v", resp.IFile)
 			file, err := os.Open(resp.FileName)
 			if err != nil {
 				log.Fatal("worker error: open named file failed ", resp.FileName)
@@ -64,7 +58,7 @@ func Worker(mapf func(string, string) []KeyValue,
 
 			outEncs := make([]*json.Encoder, resp.NReduce)
 			for i := 0; i < resp.NReduce; i++ {
-				file, err := os.OpenFile(fmt.Sprintf("./inter/mr-%v-%v", resp.IMap, i), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+				file, err := os.OpenFile(fmt.Sprintf("./mr-%v-%v", resp.IFile, i), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 				if err != nil {
 					log.Fatal("worker error: create intermediate file failed ", err)
 				}
@@ -78,7 +72,66 @@ func Worker(mapf func(string, string) []KeyValue,
 				}
 			}
 
-			call("Coordinator.FinishTask", &FinishTaskArgs{TaskType: resp.TaskType, ITask: resp.IMap}, &FinishTaskReply{})
+			call("Coordinator.FinishTask", &FinishTaskArgs{TaskType: resp.TaskType, ITask: resp.IFile}, &FinishTaskReply{})
+		case ReduceTask:
+			//log.Printf("reducing %v", resp.IFile)
+			i := 0
+			var kva []KeyValue
+			for i < resp.NMap {
+				file, err := os.Open(fmt.Sprintf("./mr-%v-%v", i, resp.IFile))
+				if err != nil {
+					log.Println("worker error: failed to open file ", i, err)
+					break
+				}
+
+				dec := json.NewDecoder(file)
+				for dec.More() {
+					var kv KeyValue
+					err := dec.Decode(&kv)
+					if err != nil {
+						log.Fatal("worker fatal: failed to decode file")
+					}
+					kva = append(kva, kv)
+				}
+				i++
+			}
+
+			res := map[string][]string{}
+			i = 0
+			for i < len(kva) {
+				j := i + 1
+				for j < len(kva) && kva[j].Key == kva[i].Key {
+					j++
+				}
+				for k := i; k < j; k++ {
+					res[kva[i].Key] = append(res[kva[i].Key], kva[k].Value)
+				}
+				i = j
+			}
+
+			sortedKey := []string{}
+			for key := range res {
+				sortedKey = append(sortedKey, key)
+			}
+			sort.Slice(sortedKey, func(i, j int) bool {
+				return sortedKey[i] < sortedKey[j]
+			})
+
+			oname := fmt.Sprintf("mr-out-%v", resp.IFile)
+			ofile, _ := os.Create(oname)
+
+			for _, key := range sortedKey {
+				values := res[key]
+				output := reducef(key, values)
+				fmt.Fprintf(ofile, "%v %v\n", key, output)
+			}
+			ofile.Close()
+			call("Coordinator.FinishTask", &FinishTaskArgs{TaskType: resp.TaskType, ITask: resp.IFile}, &FinishTaskReply{})
+		case Wait:
+			time.Sleep(2 * time.Second)
+			continue
+		default:
+			panic("unhandled default case")
 		}
 	}
 

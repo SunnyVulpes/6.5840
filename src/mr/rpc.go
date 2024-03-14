@@ -30,7 +30,8 @@ type GetTaskArgs struct {
 type GetTaskReply struct {
 	TaskType int
 	FileName string
-	IMap     int
+	IFile    int
+	NMap     int
 	NReduce  int
 }
 
